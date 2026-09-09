@@ -1,5 +1,15 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
-const PROJECTION_ENDPOINT = import.meta.env.VITE_PROJECTION_ENDPOINT || "/api/proyeccion";
+const PROJECTION_ENDPOINT_RAW = import.meta.env.VITE_PROJECTION_ENDPOINT || "/api/proyeccion/";
+const PROJECTION_ENDPOINT = PROJECTION_ENDPOINT_RAW.endsWith("/")
+  ? PROJECTION_ENDPOINT_RAW
+  : `${PROJECTION_ENDPOINT_RAW}/`;
+
+const DEFAULT_PROJECTION_PARAMS = {
+  estacion: import.meta.env.VITE_PROJECTION_ESTACION || "2",
+  codprd: import.meta.env.VITE_PROJECTION_CODPRD || "1",
+  fecha_inicio: import.meta.env.VITE_PROJECTION_FECHA_INICIO || "2026-04-01",
+  fecha_fin: import.meta.env.VITE_PROJECTION_FECHA_FIN || "2026-06-16",
+};
 
 function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -30,16 +40,42 @@ function extractRows(payload) {
   const actual = payload?.reales || payload?.real || payload?.actual;
   const forecast = payload?.proyecciones || payload?.predicciones || payload?.forecast;
   if (Array.isArray(labels) && (Array.isArray(actual) || Array.isArray(forecast))) {
-    return labels.map((label, index) => ({ periodo: label, real: Array.isArray(actual) ? actual[index] : null, proyeccion: Array.isArray(forecast) ? forecast[index] : null }));
+    return labels.map((label, index) => ({
+      periodo: label,
+      real: Array.isArray(actual) ? actual[index] : null,
+      proyeccion: Array.isArray(forecast) ? forecast[index] : null,
+    }));
   }
   throw new Error("La respuesta del backend no contiene una serie reconocible.");
 }
 
-export async function fetchProjection({ signal } = {}) {
-  const response = await fetch(`${API_BASE_URL}${PROJECTION_ENDPOINT}`, { headers: { Accept: "application/json" }, signal });
-  if (!response.ok) throw new Error(`El backend respondió ${response.status} ${response.statusText}`);
+function buildProjectionUrl(params = {}) {
+  const query = new URLSearchParams({
+    ...DEFAULT_PROJECTION_PARAMS,
+    ...params,
+  });
+
+  return `${API_BASE_URL}${PROJECTION_ENDPOINT}?${query.toString()}`;
+}
+
+export async function fetchProjection({ signal, params } = {}) {
+  const response = await fetch(buildProjectionUrl(params), {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`El backend respondió ${response.status} ${response.statusText}`);
+  }
+
   const payload = await response.json();
-  const rows = extractRows(payload).map(normalizePoint).filter((item) => item.real !== null || item.proyeccion !== null);
-  if (!rows.length) throw new Error("El backend respondió correctamente, pero no devolvió datos de proyección.");
+  const rows = extractRows(payload)
+    .map(normalizePoint)
+    .filter((item) => item.real !== null || item.proyeccion !== null);
+
+  if (!rows.length) {
+    throw new Error("El backend respondió correctamente, pero no devolvió datos de proyección.");
+  }
+
   return rows;
 }
