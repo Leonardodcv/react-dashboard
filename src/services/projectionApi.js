@@ -4,12 +4,43 @@ const PROJECTION_ENDPOINT = PROJECTION_ENDPOINT_RAW.endsWith("/")
   ? PROJECTION_ENDPOINT_RAW
   : `${PROJECTION_ENDPOINT_RAW}/`;
 
-const DEFAULT_PROJECTION_PARAMS = {
-  estacion: import.meta.env.VITE_PROJECTION_ESTACION || "2",
-  codprd: import.meta.env.VITE_PROJECTION_CODPRD || "1",
-  fecha_inicio: import.meta.env.VITE_PROJECTION_FECHA_INICIO || "2026-04-01",
-  fecha_fin: import.meta.env.VITE_PROJECTION_FECHA_FIN || "2026-06-16",
-};
+export const PROJECTION_REQUESTS = [
+  {
+    id: "estacion-2-producto-1",
+    title: "Estación 2 · Producto 1",
+    subtitle: "Comparativo de proyección y consumo real",
+    params: {
+      estacion: "2",
+      codprd: "1",
+      fecha_inicio: "2026-04-01",
+      fecha_fin: "2026-06-16",
+    },
+  },
+  {
+    id: "estacion-2-producto-3",
+    title: "Estación 2 · Producto 3",
+    subtitle: "Comparativo de proyección y consumo real",
+    params: {
+      estacion: "2",
+      codprd: "3",
+      fecha_inicio: "2026-04-01",
+      fecha_fin: "2026-06-16",
+    },
+  },
+  {
+    id: "estacion-1-producto-3",
+    title: "Estación 1 · Producto 3",
+    subtitle: "Comparativo de proyección y consumo real",
+    params: {
+      estacion: "1",
+      codprd: "3",
+      fecha_inicio: "2026-04-01",
+      fecha_fin: "2026-06-16",
+    },
+  },
+];
+
+const DEFAULT_PROJECTION_PARAMS = PROJECTION_REQUESTS[0].params;
 
 function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -33,12 +64,21 @@ function normalizePoint(item, index) {
 
 function extractRows(payload) {
   if (Array.isArray(payload)) return payload;
-  const rows = [payload?.data, payload?.resultados, payload?.proyeccion, payload?.predicciones, payload?.series].find(Array.isArray);
+
+  const rows = [
+    payload?.data,
+    payload?.resultados,
+    payload?.proyeccion,
+    payload?.predicciones,
+    payload?.series,
+  ].find(Array.isArray);
+
   if (rows) return rows;
 
   const labels = payload?.fechas || payload?.periodos || payload?.labels;
   const actual = payload?.reales || payload?.real || payload?.actual;
   const forecast = payload?.proyecciones || payload?.predicciones || payload?.forecast;
+
   if (Array.isArray(labels) && (Array.isArray(actual) || Array.isArray(forecast))) {
     return labels.map((label, index) => ({
       periodo: label,
@@ -46,10 +86,11 @@ function extractRows(payload) {
       proyeccion: Array.isArray(forecast) ? forecast[index] : null,
     }));
   }
+
   throw new Error("La respuesta del backend no contiene una serie reconocible.");
 }
 
-function buildProjectionUrl(params = {}) {
+export function buildProjectionUrl(params = {}) {
   const query = new URLSearchParams({
     ...DEFAULT_PROJECTION_PARAMS,
     ...params,

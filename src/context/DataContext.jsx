@@ -1,12 +1,9 @@
 /**
  * context/DataContext.jsx
  * ------------------------------------------------------------------
- * Centraliza los datos "dinámicos" que alimentan las gráficas
- * (Dashboard y Analíticas) y la función `regenerate()` que el botón
- * "regenerar datos" de la barra superior dispara.
- *
- * Al vivir en contexto, cualquier página puede leer los mismos datos
- * sin que el Topbar necesite conocer el detalle de cada gráfica.
+ * Centraliza los datos dinámicos de la aplicación. Para Analíticas
+ * mantiene tres consultas de proyección independientes para que cada
+ * combinación estación/producto tenga su propia gráfica y tablas.
  */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
@@ -17,9 +14,18 @@ import {
   sparkline,
 } from "../data/generators.js";
 import { useToast } from "./ToastContext.jsx";
-import { fetchProjection } from "../services/projectionApi.js";
+import { fetchProjection, PROJECTION_REQUESTS } from "../services/projectionApi.js";
 
 const DataContext = createContext(null);
+
+function createInitialProjectionState() {
+  return Object.fromEntries(
+    PROJECTION_REQUESTS.map((config) => [
+      config.id,
+      { data: [], loading: true, error: null },
+    ]),
+  );
+}
 
 export function DataProvider({ children }) {
   const { pushToast } = useToast();
@@ -30,40 +36,58 @@ export function DataProvider({ children }) {
   const [areaData, setAreaData] = useState(randomAreaData);
   const [sparklines, setSparklines] = useState(() => [sparkline(), sparkline(), sparkline(), sparkline()]);
   const [regenerating, setRegenerating] = useState(false);
+  const [projectionState, setProjectionState] = useState(createInitialProjectionState);
 
-  const [projectionData, setProjectionData] = useState([]);
-  const [projectionLoading, setProjectionLoading] = useState(true);
-  const [projectionError, setProjectionError] = useState(null);
+  function updateProjectionState(id, patch) {
+    setProjectionState((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        ...patch,
+      },
+    }));
+  }
 
+  async function loadProjection(id, { notify = false, signal } = {}) {
+    const config = PROJECTION_REQUESTS.find((item) => item.id === id);
+    if (!config) return;
 
-  async function loadProjection({ notify = false } = {}) {
-    setProjectionLoading(true);
-    setProjectionError(null);
+    updateProjectionState(id, { loading: true, error: null });
 
     try {
-      const data = await fetchProjection();
-      setProjectionData(data);
-      if (notify) pushToast("success", "Proyección actualizada desde el backend");
+      const data = await fetchProjection({ signal, params: config.params });
+      updateProjectionState(id, { data, loading: false, error: null });
+
+      if (notify) {
+        pushToast("success", `${config.title}: proyección actualizada`);
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No fue posible cargar la proyección";
-      setProjectionError(message);
-      if (notify) pushToast("danger", message);
-    } finally {
-      setProjectionLoading(false);
+      if (error?.name === "AbortError") return;
+
+      const message = error instanceof Error
+        ? error.message
+        : "No fue posible cargar la proyección";
+
+      updateProjectionState(id, { loading: false, error: message });
+
+      if (notify) {
+        pushToast("danger", `${config.title}: ${message}`);
+      }
     }
+  }
+
+  function loadAllProjections({ notify = false } = {}) {
+    return Promise.all(
+      PROJECTION_REQUESTS.map((config) => loadProjection(config.id, { notify })),
+    );
   }
 
   useEffect(() => {
     const controller = new AbortController();
 
-    fetchProjection({ signal: controller.signal })
-      .then(setProjectionData)
-      .catch((error) => {
-        if (error?.name !== "AbortError") {
-          setProjectionError(error instanceof Error ? error.message : "No fue posible cargar la proyección");
-        }
-      })
-      .finally(() => setProjectionLoading(false));
+    PROJECTION_REQUESTS.forEach((config) => {
+      loadProjection(config.id, { signal: controller.signal });
+    });
 
     return () => controller.abort();
   }, []);
@@ -85,10 +109,23 @@ export function DataProvider({ children }) {
     setLineData(randomLineData());
     setAreaData(randomAreaData());
     setSparklines([sparkline(), sparkline(), sparkline(), sparkline()]);
-    loadProjection();
+    loadAllProjections();
     pushToast("success", "Datos actualizados en todos los paneles");
     setTimeout(() => setRegenerating(false), 500);
   }
+
+  const projectionSections = PROJECTION_REQUESTS.map((config) => ({
+    ...config,
+    ...(projectionState[config.id] || { data: [], loading: true, error: null }),
+  }));
+
+  // Alias de la primera serie para mantener compatibilidad con cualquier
+  // componente que todavía espere las propiedades antiguas del contexto.
+  const firstProjection = projectionSections[0] || {
+    data: [],
+    loading: true,
+    error: null,
+  };
 
   const value = {
     barData,
@@ -101,10 +138,12 @@ export function DataProvider({ children }) {
     totalIngresos,
     totalGastos,
     regenerate,
-    projectionData,
-    projectionLoading,
-    projectionError,
-    reloadProjection: () => loadProjection({ notify: true }),
+    projectionSections,
+    reloadProjection: (id) => loadProjection(id || PROJECTION_REQUESTS[0].id, { notify: true }),
+    reloadAllProjections: () => loadAllProjections({ notify: true }),
+    projectionData: firstProjection.data,
+    projectionLoading: firstProjection.loading,
+    projectionError: firstProjection.error,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
