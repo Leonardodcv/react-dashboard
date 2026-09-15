@@ -3,44 +3,56 @@ const PROJECTION_ENDPOINT_RAW = import.meta.env.VITE_PROJECTION_ENDPOINT || "/ap
 const PROJECTION_ENDPOINT = PROJECTION_ENDPOINT_RAW.endsWith("/")
   ? PROJECTION_ENDPOINT_RAW
   : `${PROJECTION_ENDPOINT_RAW}/`;
+const CONFIG_ENDPOINT = import.meta.env.VITE_CONFIG_ENDPOINT || "/api/v1/config/";
+
+export const MIN_PROJECTION_DATE = "2026-04-01";
+export const DEFAULT_ANALYTICS_MAX_HORIZON_DAYS = 730;
+
+export const DEFAULT_PROJECTION_DATE_RANGE = {
+  fecha_inicio: import.meta.env.VITE_PROJECTION_FECHA_INICIO || MIN_PROJECTION_DATE,
+  fecha_fin: import.meta.env.VITE_PROJECTION_FECHA_FIN || "2026-06-16",
+};
 
 export const PROJECTION_REQUESTS = [
   {
     id: "estacion-2-producto-1",
-    title: "Estación 2 · Producto 1",
-    subtitle: "Comparativo de proyección y consumo real",
+    title: "TGF · Gasolina regular",
+    subtitle: "TGF · Gasolina regular · comparativo de proyección y consumo real",
+    estacionLabel: "TGF",
+    productoLabel: "Gasolina regular",
     params: {
       estacion: "2",
       codprd: "1",
-      fecha_inicio: "2026-04-01",
-      fecha_fin: "2026-06-16",
     },
   },
   {
     id: "estacion-2-producto-3",
-    title: "Estación 2 · Producto 3",
-    subtitle: "Comparativo de proyección y consumo real",
+    title: "TGF · Diesel",
+    subtitle: "TGF · Diesel · comparativo de proyección y consumo real",
+    estacionLabel: "TGF",
+    productoLabel: "Diesel",
     params: {
       estacion: "2",
       codprd: "3",
-      fecha_inicio: "2026-04-01",
-      fecha_fin: "2026-06-16",
     },
   },
   {
     id: "estacion-1-producto-3",
-    title: "Estación 1 · Producto 3",
-    subtitle: "Comparativo de proyección y consumo real",
+    title: "TankFarm · Diesel",
+    subtitle: "TankFarm · Diesel · comparativo de proyección y consumo real",
+    estacionLabel: "TankFarm",
+    productoLabel: "Diesel",
     params: {
       estacion: "1",
       codprd: "3",
-      fecha_inicio: "2026-04-01",
-      fecha_fin: "2026-06-16",
     },
   },
 ];
 
-const DEFAULT_PROJECTION_PARAMS = PROJECTION_REQUESTS[0].params;
+const DEFAULT_PROJECTION_PARAMS = {
+  ...PROJECTION_REQUESTS[0].params,
+  ...DEFAULT_PROJECTION_DATE_RANGE,
+};
 
 function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -90,6 +102,21 @@ function extractRows(payload) {
   throw new Error("La respuesta del backend no contiene una serie reconocible.");
 }
 
+async function readErrorMessage(response) {
+  const payload = await response.json().catch(() => null);
+
+  if (typeof payload?.detail === "string") return payload.detail;
+  if (typeof payload?.error?.message === "string") return payload.error.message;
+
+  if (payload && typeof payload === "object") {
+    const firstValue = Object.values(payload)[0];
+    if (Array.isArray(firstValue) && firstValue.length) return String(firstValue[0]);
+    if (typeof firstValue === "string") return firstValue;
+  }
+
+  return `El backend respondió ${response.status} ${response.statusText}`;
+}
+
 export function buildProjectionUrl(params = {}) {
   const query = new URLSearchParams({
     ...DEFAULT_PROJECTION_PARAMS,
@@ -106,7 +133,7 @@ export async function fetchProjection({ signal, params } = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`El backend respondió ${response.status} ${response.statusText}`);
+    throw new Error(await readErrorMessage(response));
   }
 
   const payload = await response.json();
@@ -119,4 +146,28 @@ export async function fetchProjection({ signal, params } = {}) {
   }
 
   return rows;
+}
+
+export async function fetchFrontendConfig({ signal } = {}) {
+  const response = await fetch(`${API_BASE_URL}${CONFIG_ENDPOINT}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  const payload = await response.json();
+  const data = payload?.data || {};
+  const maxHorizon = Number(data?.limits?.projection_analytics_max_horizon_days);
+
+  return {
+    apiVersion: payload?.meta?.api_version || null,
+    algorithmVersion: payload?.meta?.algorithm_version || null,
+    analyticsMaxHorizonDays: Number.isFinite(maxHorizon) && maxHorizon > 0
+      ? maxHorizon
+      : DEFAULT_ANALYTICS_MAX_HORIZON_DAYS,
+    projectionAnalyticsPublic: Boolean(data?.feature_flags?.projection_analytics_public),
+  };
 }

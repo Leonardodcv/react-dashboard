@@ -2,11 +2,11 @@
 
 La página `Analíticas` ahora muestra tres bloques independientes con la misma estructura visual:
 
-1. Estación 2 / Producto 1
+1. TGF / Gasolina regular
    - `GET /api/proyeccion/?estacion=2&codprd=1&fecha_inicio=2026-04-01&fecha_fin=2026-06-16`
-2. Estación 2 / Producto 3
+2. TGF / Diesel
    - `GET /api/proyeccion/?estacion=2&codprd=3&fecha_inicio=2026-04-01&fecha_fin=2026-06-16`
-3. Estación 1 / Producto 3
+3. TankFarm / Diesel
    - `GET /api/proyeccion/?estacion=1&codprd=3&fecha_inicio=2026-04-01&fecha_fin=2026-06-16`
 
 Cada bloque incluye:

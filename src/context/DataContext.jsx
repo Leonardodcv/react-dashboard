@@ -4,6 +4,11 @@
  * Centraliza los datos dinámicos de la aplicación. Para Analíticas
  * mantiene tres consultas de proyección independientes para que cada
  * combinación estación/producto tenga su propia gráfica y tablas.
+ * El rango de fechas es compartido entre las tres secciones y puede
+ * cambiarse desde los calendarios de la página de Analíticas.
+ *
+ * Desde backend v14.4 también consulta /api/v1/config/ para conocer
+ * el límite real del horizonte analítico (730 días por defecto).
  */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
@@ -14,7 +19,13 @@ import {
   sparkline,
 } from "../data/generators.js";
 import { useToast } from "./ToastContext.jsx";
-import { fetchProjection, PROJECTION_REQUESTS } from "../services/projectionApi.js";
+import {
+  DEFAULT_ANALYTICS_MAX_HORIZON_DAYS,
+  DEFAULT_PROJECTION_DATE_RANGE,
+  fetchFrontendConfig,
+  fetchProjection,
+  PROJECTION_REQUESTS,
+} from "../services/projectionApi.js";
 
 const DataContext = createContext(null);
 
@@ -37,6 +48,15 @@ export function DataProvider({ children }) {
   const [sparklines, setSparklines] = useState(() => [sparkline(), sparkline(), sparkline(), sparkline()]);
   const [regenerating, setRegenerating] = useState(false);
   const [projectionState, setProjectionState] = useState(createInitialProjectionState);
+  const [projectionDateRange, setProjectionDateRange] = useState(DEFAULT_PROJECTION_DATE_RANGE);
+  const [backendConfig, setBackendConfig] = useState({
+    apiVersion: null,
+    algorithmVersion: null,
+    analyticsMaxHorizonDays: DEFAULT_ANALYTICS_MAX_HORIZON_DAYS,
+    projectionAnalyticsPublic: true,
+    loading: true,
+    error: null,
+  });
 
   function updateProjectionState(id, patch) {
     setProjectionState((current) => ({
@@ -48,14 +68,20 @@ export function DataProvider({ children }) {
     }));
   }
 
-  async function loadProjection(id, { notify = false, signal } = {}) {
+  async function loadProjection(id, { notify = false, signal, dateRange } = {}) {
     const config = PROJECTION_REQUESTS.find((item) => item.id === id);
     if (!config) return;
+
+    const activeDateRange = dateRange || projectionDateRange;
+    const requestParams = {
+      ...config.params,
+      ...activeDateRange,
+    };
 
     updateProjectionState(id, { loading: true, error: null });
 
     try {
-      const data = await fetchProjection({ signal, params: config.params });
+      const data = await fetchProjection({ signal, params: requestParams });
       updateProjectionState(id, { data, loading: false, error: null });
 
       if (notify) {
@@ -76,17 +102,42 @@ export function DataProvider({ children }) {
     }
   }
 
-  function loadAllProjections({ notify = false } = {}) {
+  function loadAllProjections({ notify = false, dateRange } = {}) {
     return Promise.all(
-      PROJECTION_REQUESTS.map((config) => loadProjection(config.id, { notify })),
+      PROJECTION_REQUESTS.map((config) => loadProjection(config.id, { notify, dateRange })),
+    );
+  }
+
+  async function applyProjectionDateRange(nextRange) {
+    setProjectionDateRange(nextRange);
+    await loadAllProjections({ dateRange: nextRange });
+    pushToast(
+      "success",
+      `Período actualizado: ${nextRange.fecha_inicio} a ${nextRange.fecha_fin}`,
     );
   }
 
   useEffect(() => {
     const controller = new AbortController();
 
+    fetchFrontendConfig({ signal: controller.signal })
+      .then((config) => {
+        setBackendConfig({ ...config, loading: false, error: null });
+      })
+      .catch((error) => {
+        if (error?.name === "AbortError") return;
+        setBackendConfig((current) => ({
+          ...current,
+          loading: false,
+          error: error instanceof Error ? error.message : "No fue posible leer la configuración del backend",
+        }));
+      });
+
     PROJECTION_REQUESTS.forEach((config) => {
-      loadProjection(config.id, { signal: controller.signal });
+      loadProjection(config.id, {
+        signal: controller.signal,
+        dateRange: DEFAULT_PROJECTION_DATE_RANGE,
+      });
     });
 
     return () => controller.abort();
@@ -109,13 +160,17 @@ export function DataProvider({ children }) {
     setLineData(randomLineData());
     setAreaData(randomAreaData());
     setSparklines([sparkline(), sparkline(), sparkline(), sparkline()]);
-    loadAllProjections();
+    loadAllProjections({ dateRange: projectionDateRange });
     pushToast("success", "Datos actualizados en todos los paneles");
     setTimeout(() => setRegenerating(false), 500);
   }
 
   const projectionSections = PROJECTION_REQUESTS.map((config) => ({
     ...config,
+    params: {
+      ...config.params,
+      ...projectionDateRange,
+    },
     ...(projectionState[config.id] || { data: [], loading: true, error: null }),
   }));
 
@@ -139,8 +194,17 @@ export function DataProvider({ children }) {
     totalGastos,
     regenerate,
     projectionSections,
-    reloadProjection: (id) => loadProjection(id || PROJECTION_REQUESTS[0].id, { notify: true }),
-    reloadAllProjections: () => loadAllProjections({ notify: true }),
+    projectionDateRange,
+    backendConfig,
+    applyProjectionDateRange,
+    reloadProjection: (id) => loadProjection(id || PROJECTION_REQUESTS[0].id, {
+      notify: true,
+      dateRange: projectionDateRange,
+    }),
+    reloadAllProjections: () => loadAllProjections({
+      notify: true,
+      dateRange: projectionDateRange,
+    }),
     projectionData: firstProjection.data,
     projectionLoading: firstProjection.loading,
     projectionError: firstProjection.error,
